@@ -11,12 +11,13 @@ type Theme = "Minimal" | "Gradient" | "Dark";
 type LayoutStyle = "centered" | "split" | "highlight" | "quote";
 
 const API_URL = import.meta.env.VITE_API_URL;
+console.log("API URL:", API_URL);
 const LAYOUTS: LayoutStyle[] = ["centered", "split", "highlight", "quote"];
 const THEME_OPTIONS: Theme[] = ["Minimal", "Gradient", "Dark"];
 
 async function generateSlides(idea: string, format: string): Promise<Slide[]> {
   if (!API_URL) {
-    throw new Error("VITE_API_URL is not configured. Please set it in frontend env.");
+    throw new Error("VITE_API_URL is not set. Check environment variables.");
   }
 
   const response = await fetch(`${API_URL}/generate`, {

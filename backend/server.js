@@ -7,9 +7,29 @@ dotenv.config();
 
 const app = express();
 const port = process.env.PORT || 4000;
+const nodeEnv = process.env.NODE_ENV || "development";
+const corsOrigins = (process.env.CORS_ORIGINS || "")
+  .split(",")
+  .map((origin) => origin.trim())
+  .filter(Boolean);
 
-app.use(cors());
+app.use(
+  cors({
+    origin(origin, callback) {
+      // Allow non-browser and server-to-server requests (no Origin header).
+      if (!origin) return callback(null, true);
+      if (corsOrigins.length === 0) return callback(null, true);
+      if (corsOrigins.includes(origin)) return callback(null, true);
+      return callback(new Error("CORS blocked: origin is not allowed"));
+    },
+  }),
+);
 app.use(express.json({ limit: "1mb" }));
+
+app.use((req, _res, next) => {
+  req.requestStart = Date.now();
+  next();
+});
 
 const openai = new OpenAI({
   apiKey: process.env.OPENROUTER_API_KEY,
@@ -93,15 +113,30 @@ Format preference: ${format || "Post"}`,
     const slides = normalizeSlides(parsed.slides);
     return res.json(slides);
   } catch (error) {
-    console.error("Generation error:", error);
+    const safeMessage = error instanceof Error ? error.message : "Unknown error";
+    console.error("Generation error:", {
+      message: safeMessage,
+      route: req.originalUrl,
+      method: req.method,
+      duration_ms: Date.now() - req.requestStart,
+    });
+
+    if (nodeEnv !== "production" && error instanceof Error && error.stack) {
+      console.error(error.stack);
+    }
     return res.status(500).json({ error: "Failed to generate slides. Please retry." });
   }
 });
 
 app.get("/health", (_req, res) => {
-  res.json({ ok: true });
+  res.json({ ok: true, env: nodeEnv, uptime_s: Math.round(process.uptime()) });
 });
 
 app.listen(port, () => {
-  console.log(`SlideForge backend running on http://localhost:${port}`);
+  console.log(`SlideForge backend running on port ${port} (${nodeEnv})`);
+  if (corsOrigins.length > 0) {
+    console.log(`Allowed CORS origins: ${corsOrigins.join(", ")}`);
+  } else {
+    console.log("Allowed CORS origins: all (CORS_ORIGINS not set)");
+  }
 });

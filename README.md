@@ -63,6 +63,7 @@ Create `.env` in `backend`:
 PORT=4000
 OPENROUTER_API_KEY=your_openrouter_api_key
 OPENROUTER_MODEL=openai/gpt-4o-mini
+CORS_ORIGINS=https://your-frontend.vercel.app
 ```
 
 ## Frontend (`frontend/.env`) (optional for local)
@@ -167,6 +168,8 @@ Response:
 4. Add environment variables in Render:
    - `OPENROUTER_API_KEY`
    - `OPENROUTER_MODEL` (optional, default is `openai/gpt-4o-mini`)
+   - `CORS_ORIGINS` (recommended, comma-separated list of allowed frontend origins)
+     - Example: `https://your-app.vercel.app,https://your-custom-domain.com`
 5. Deploy and verify:
    - `https://your-service.onrender.com/health`
 
@@ -179,7 +182,7 @@ Response:
    - **Build command**: `npm run build`
    - **Output directory**: `dist`
 3. Add environment variable in Vercel:
-   - `VITE_API_URL=https://your-backend.onrender.com`
+   - `VITE_API_URL=https://slideforge-ai.onrender.com`
 4. Redeploy frontend.
 
 ---
@@ -188,6 +191,7 @@ Response:
 
 - **Frontend cannot call backend**
   - Ensure `VITE_API_URL` points to deployed Render URL.
+  - Ensure `CORS_ORIGINS` in Render includes your Vercel domain.
   - Confirm backend `/health` endpoint works.
 
 - **500 from `/generate`**
