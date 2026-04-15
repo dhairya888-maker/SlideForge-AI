@@ -18,6 +18,12 @@ type LayoutVariant = "centered" | "split" | "highlight" | "quote";
 type UiTheme = "Dark" | "Light";
 const LAYOUT_VARIANTS: LayoutVariant[] = ["centered", "split", "highlight", "quote"];
 const FORMAT_OPTIONS: FormatType[] = ["Post", "Story", "Carousel"];
+type RenderedSlide = Slide & {
+  layoutVariant: LayoutVariant;
+  imageUrl: string;
+  displayTag: string;
+  emoji: string;
+};
 
 async function generateSlides(idea: string, format: string, numberOfSlides: number): Promise<Slide[]> {
   if (!API_URL) {
@@ -97,9 +103,130 @@ function buildPollinationsUrl(slide: Slide, format: FormatType) {
   return `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}?width=512&height=512&nologo=true`;
 }
 
-async function dataUrlToBlob(dataUrl: string) {
-  const response = await fetch(dataUrl);
-  return response.blob();
+async function loadImage(src: string): Promise<HTMLImageElement> {
+  const response = await fetch(src);
+  if (!response.ok) {
+    throw new Error("Could not load image for export.");
+  }
+  const blob = await response.blob();
+  const objectUrl = URL.createObjectURL(blob);
+
+  try {
+    const img = await new Promise<HTMLImageElement>((resolve, reject) => {
+      const image = new Image();
+      image.onload = () => resolve(image);
+      image.onerror = () => reject(new Error("Image decoding failed."));
+      image.src = objectUrl;
+    });
+    return img;
+  } finally {
+    URL.revokeObjectURL(objectUrl);
+  }
+}
+
+function wrapCanvasText(ctx: CanvasRenderingContext2D, text: string, maxWidth: number, maxLines: number) {
+  const words = text.split(/\s+/).filter(Boolean);
+  const lines: string[] = [];
+  let current = "";
+
+  for (const word of words) {
+    const test = current ? `${current} ${word}` : word;
+    if (ctx.measureText(test).width <= maxWidth) {
+      current = test;
+      continue;
+    }
+    if (current) lines.push(current);
+    current = word;
+    if (lines.length >= maxLines) break;
+  }
+  if (current && lines.length < maxLines) lines.push(current);
+  return lines.slice(0, maxLines);
+}
+
+async function createSlideCompositeBlob(
+  slide: RenderedSlide,
+  format: FormatType,
+  primaryColor: string,
+  secondaryColor: string,
+  uiTheme: UiTheme,
+) {
+  const width = 1080;
+  const height = format === "Story" ? 1920 : 1080;
+  const canvas = document.createElement("canvas");
+  canvas.width = width;
+  canvas.height = height;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) throw new Error("Canvas context unavailable.");
+
+  try {
+    const image = await loadImage(slide.imageUrl);
+    ctx.drawImage(image, 0, 0, width, height);
+  } catch {
+    const fallbackGradient = ctx.createLinearGradient(0, 0, width, height);
+    fallbackGradient.addColorStop(0, primaryColor);
+    fallbackGradient.addColorStop(1, secondaryColor);
+    ctx.fillStyle = fallbackGradient;
+    ctx.fillRect(0, 0, width, height);
+  }
+
+  const accentGradient = ctx.createLinearGradient(0, 0, width, height);
+  accentGradient.addColorStop(0, `${primaryColor}B3`);
+  accentGradient.addColorStop(1, `${secondaryColor}B3`);
+  ctx.fillStyle = accentGradient;
+  ctx.fillRect(0, 0, width, height);
+
+  ctx.fillStyle = uiTheme === "Dark" ? "rgba(0, 0, 0, 0.55)" : "rgba(255, 255, 255, 0.38)";
+  ctx.fillRect(0, 0, width, height);
+
+  const textColor = uiTheme === "Dark" ? "#FFFFFF" : "#0f172a";
+  const mutedColor = uiTheme === "Dark" ? "rgba(241, 245, 249, 0.9)" : "rgba(15, 23, 42, 0.82)";
+
+  const chipY = format === "Story" ? 90 : 70;
+  ctx.fillStyle = uiTheme === "Dark" ? "rgba(255, 255, 255, 0.18)" : "rgba(15, 23, 42, 0.12)";
+  ctx.fillRect(56, chipY, 190, 54);
+  ctx.fillRect(width - 300, chipY, 244, 54);
+
+  ctx.fillStyle = textColor;
+  ctx.font = "700 26px Inter, sans-serif";
+  ctx.fillText(slide.displayTag, 76, chipY + 36);
+  ctx.fillText(slide.design_style.toUpperCase(), width - 280, chipY + 36);
+
+  const titleMaxWidth = width - 112;
+  const contentMaxWidth = width - 112;
+  const titleSize = format === "Story" ? 68 : 62;
+  const contentSize = format === "Story" ? 42 : 36;
+
+  ctx.fillStyle = textColor;
+  ctx.font = `800 ${titleSize}px Inter, sans-serif`;
+  const titleLines = wrapCanvasText(ctx, slide.title, titleMaxWidth, format === "Story" ? 3 : 2);
+  let y = format === "Story" ? 340 : 300;
+  for (const line of titleLines) {
+    ctx.fillText(line, 56, y);
+    y += Math.round(titleSize * 1.12);
+  }
+
+  ctx.fillStyle = mutedColor;
+  ctx.font = `500 ${contentSize}px Inter, sans-serif`;
+  y += 24;
+  const contentLines = wrapCanvasText(ctx, slide.content, contentMaxWidth, format === "Story" ? 5 : 4);
+  for (const line of contentLines) {
+    ctx.fillText(line, 56, y);
+    y += Math.round(contentSize * 1.28);
+  }
+
+  ctx.fillStyle = textColor;
+  ctx.font = "600 28px Inter, sans-serif";
+  const footer = `${slide.emoji} ${slide.topic} · ${slide.layout}`;
+  ctx.fillText(footer, 56, height - 64);
+
+  const blob = await new Promise<Blob>((resolve, reject) => {
+    canvas.toBlob((result) => {
+      if (result) resolve(result);
+      else reject(new Error("Could not export slide image."));
+    }, "image/png");
+  });
+
+  return blob;
 }
 
 function App() {
@@ -125,7 +252,7 @@ function App() {
     [slides],
   );
 
-  const renderedSlides = useMemo(
+  const renderedSlides: RenderedSlide[] = useMemo(
     () =>
       slides.map((slide, index) => {
         const layout = getLayoutVariant(slide, index);
@@ -144,7 +271,7 @@ function App() {
 
         return {
           ...slide,
-          layout,
+          layoutVariant: layout,
           imageUrl: buildPollinationsUrl(slide, format),
           displayTag,
           emoji: getTopicEmoji(slide.topic),
@@ -210,9 +337,15 @@ function App() {
     await navigator.clipboard.writeText(allSlidesText);
   };
 
-  const handleDownloadSlide = async (index: number, imageUrl: string) => {
+  const handleDownloadSlide = async (index: number) => {
     try {
-      const blob = await dataUrlToBlob(imageUrl);
+      const blob = await createSlideCompositeBlob(
+        renderedSlides[index],
+        format,
+        primaryColor,
+        secondaryColor,
+        uiTheme,
+      );
       saveAs(blob, `slide-${index + 1}.png`);
     } catch {
       setError("Could not download this slide. Please try again.");
@@ -225,7 +358,13 @@ function App() {
     try {
       const zip = new JSZip();
       for (let index = 0; index < renderedSlides.length; index += 1) {
-        const blob = await dataUrlToBlob(renderedSlides[index].imageUrl);
+        const blob = await createSlideCompositeBlob(
+          renderedSlides[index],
+          format,
+          primaryColor,
+          secondaryColor,
+          uiTheme,
+        );
         zip.file(`slide-${index + 1}.png`, blob);
       }
       const zipBlob = await zip.generateAsync({ type: "blob" });
@@ -446,9 +585,9 @@ function App() {
                       </div>
                       <h3
                         className={`mb-2 line-clamp-3 font-extrabold leading-tight ${uiTheme === "Dark" ? "text-white" : "text-slate-900"} ${
-                          slide.layout === "highlight"
+                          slide.layoutVariant === "highlight"
                             ? "text-3xl"
-                            : slide.layout === "split"
+                            : slide.layoutVariant === "split"
                               ? "text-2xl"
                               : "text-[1.7rem]"
                         }`}
@@ -458,13 +597,13 @@ function App() {
                       <p
                         className={`line-clamp-4 leading-relaxed ${uiTheme === "Dark" ? "text-slate-100" : "text-slate-800"} ${
                           format === "Story" ? "text-base" : "text-sm"
-                        } ${slide.layout === "quote" ? "italic" : ""}`}
+                        } ${slide.layoutVariant === "quote" ? "italic" : ""}`}
                       >
                         {slide.content}
                       </p>
                       <div className={`mt-3 flex items-center justify-between text-xs ${uiTheme === "Dark" ? "text-slate-200/90" : "text-slate-700"}`}>
                         <span>{slide.emoji} {slide.topic}</span>
-                        <span className="capitalize">{slide.layout}</span>
+                        <span className="capitalize">{slide.layoutVariant}</span>
                       </div>
                     </div>
                   </div>
@@ -472,7 +611,7 @@ function App() {
                     <span className="text-sm font-medium text-slate-300 capitalize">AI generated visual</span>
                     <div className="flex items-center gap-2">
                       <button
-                        onClick={() => handleDownloadSlide(index, slide.imageUrl)}
+                        onClick={() => handleDownloadSlide(index)}
                         className="pressable rounded-lg border border-slate-500/40 bg-slate-900/50 px-3 py-2 text-sm font-medium text-slate-200 transition-all duration-200 hover:border-violet-400 hover:text-violet-200"
                       >
                         Download
