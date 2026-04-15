@@ -24,27 +24,33 @@ async function generateSlides(idea: string, format: string, numberOfSlides: numb
     throw new Error("VITE_API_URL is not set. Check environment variables.");
   }
 
-  const response = await fetch(`${API_URL}/generate`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ idea, format, number_of_slides: numberOfSlides }),
-  });
+  try {
+    const normalizedApiUrl = API_URL.replace(/\/+$/, "");
+    const response = await fetch(`${normalizedApiUrl}/generate`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ idea, format, number_of_slides: numberOfSlides }),
+    });
 
-  if (!response.ok) {
-    throw new Error("Failed to generate carousel. Please try again.");
+    if (!response.ok) {
+      throw new Error("Failed to generate carousel. Please try again.");
+    }
+
+    const data = (await response.json()) as Slide[];
+    return data.map((slide) => ({
+      title: slide.title,
+      content: slide.content,
+      topic: slide.topic || "General",
+      background_prompt:
+        slide.background_prompt ||
+        `Beautiful ${slide.design_style || "modern"} social media visual about ${slide.topic || "education"}`,
+      design_style: slide.design_style || "modern",
+      layout: slide.layout || "center",
+    }));
+  } catch (error) {
+    console.error("Fetch failed:", error);
+    throw error;
   }
-
-  const data = (await response.json()) as Slide[];
-  return data.map((slide) => ({
-    title: slide.title,
-    content: slide.content,
-    topic: slide.topic || "General",
-    background_prompt:
-      slide.background_prompt ||
-      `Beautiful ${slide.design_style || "modern"} social media visual about ${slide.topic || "education"}`,
-    design_style: slide.design_style || "modern",
-    layout: slide.layout || "center",
-  }));
 }
 
 function hashString(input: string) {

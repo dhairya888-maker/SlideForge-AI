@@ -7,23 +7,9 @@ dotenv.config();
 const app = express();
 const port = process.env.PORT || 4000;
 const nodeEnv = process.env.NODE_ENV || "development";
-const corsOrigins = (process.env.CORS_ORIGINS || "")
-  .split(",")
-  .map((origin) => origin.trim())
-  .filter(Boolean);
 
-app.use(
-  cors({
-    origin(origin, callback) {
-      // Allow non-browser and server-to-server requests (no Origin header).
-      if (!origin) return callback(null, true);
-      if (corsOrigins.length === 0) return callback(null, true);
-      if (corsOrigins.includes(origin)) return callback(null, true);
-      return callback(new Error("CORS blocked: origin is not allowed"));
-    },
-  }),
-);
-app.use(express.json({ limit: "1mb" }));
+app.use(cors({ origin: "*" }));
+app.use(express.json());
 
 app.use((req, _res, next) => {
   req.requestStart = Date.now();
@@ -212,9 +198,5 @@ app.get("/health", (_req, res) => {
 app.listen(port, () => {
   console.log("API KEY:", process.env.OPENROUTER_API_KEY ? "Present" : "Missing");
   console.log(`SlideForge backend running on port ${port} (${nodeEnv})`);
-  if (corsOrigins.length > 0) {
-    console.log(`Allowed CORS origins: ${corsOrigins.join(", ")}`);
-  } else {
-    console.log("Allowed CORS origins: all (CORS_ORIGINS not set)");
-  }
+  console.log("Allowed CORS origins: *");
 });
