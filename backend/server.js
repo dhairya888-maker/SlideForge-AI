@@ -33,15 +33,19 @@ app.use((req, _res, next) => {
 const promptTemplate = `You are a social media content expert.
 
 You convert messy ideas into polished social media creatives.
+Target audience: Parents.
+Use simple, relatable, trustworthy language and avoid jargon.
 
 Output format depends on selected format:
 
 1) Carousel
-- Slide 1: Hook (attention-grabbing, emotional)
+- Slide 1: Hook (attention-grabbing)
 - Slide 2: Problem (relatable)
-- Slide 3: Insight (concept explanation)
-- Slide 4: Solution (practical value)
-- Slide 5: Takeaway (strong closing)
+- Slide 3: Insight (explanation)
+- Middle slides: Expand idea logically
+- Second last: Solution / key value
+- Last: Takeaway (strong closing)
+- Respect requested number_of_slides and keep storytelling flow.
 
 2) Post
 - Return 1 slide only
@@ -55,8 +59,9 @@ Each slide must include:
 - Title (short)
 - Content (2-3 lines, simple language)
 - topic (single short topic label such as Math, Physics, History, Kids, Chemistry)
-- background_keywords (visual search keywords for image generation)
+- background_prompt (aesthetic, modern, minimal scene matching the topic)
 - design_style (must be one of: modern, educational, historical, playful)
+- layout (must be one of: center, split, highlight, quote)
 
 Use simple conversational language. Keep it social-media friendly, not academic.
 Make visuals context-aware:
@@ -72,8 +77,9 @@ Return ONLY JSON:
    "title": "...",
    "content": "...",
    "topic": "...",
-   "background_keywords": "...",
-   "design_style": "modern"
+   "background_prompt": "...",
+   "design_style": "modern",
+   "layout": "center"
  }
 ]`;
 
@@ -82,25 +88,30 @@ function normalizeSlides(rawSlides) {
     throw new Error("AI response is not a valid slide list.");
   }
 
-  const slides = rawSlides.slice(0, 5).map((slide, index) => ({
+  const slides = rawSlides.map((slide, index) => ({
     title: String(slide?.title || `Slide ${index + 1}`).trim(),
     content: String(slide?.content || "").trim(),
     topic: String(slide?.topic || "General").trim(),
-    background_keywords: String(
-      slide?.background_keywords || `${slide?.topic || "education"}, modern illustration`,
+    background_prompt: String(
+      slide?.background_prompt || `A clean modern social media visual about ${slide?.topic || "education"}`,
     ).trim(),
     design_style: ["modern", "educational", "historical", "playful"].includes(
       String(slide?.design_style || "").toLowerCase(),
     )
       ? String(slide?.design_style).toLowerCase()
       : "modern",
+    layout: ["center", "split", "highlight", "quote"].includes(
+      String(slide?.layout || "").toLowerCase(),
+    )
+      ? String(slide?.layout).toLowerCase()
+      : "center",
   }));
 
   return slides;
 }
 
 app.post("/generate", async (req, res) => {
-  const { idea, format } = req.body ?? {};
+  const { idea, format, number_of_slides } = req.body ?? {};
 
   if (!idea || typeof idea !== "string" || !idea.trim()) {
     return res.status(400).json({ error: "Idea is required." });
@@ -114,6 +125,13 @@ app.post("/generate", async (req, res) => {
     const selectedFormat = ["Post", "Story", "Carousel"].includes(String(format))
       ? String(format)
       : "Carousel";
+    const requestedSlides = Number.isInteger(number_of_slides)
+      ? Math.min(10, Math.max(1, Number(number_of_slides)))
+      : selectedFormat === "Carousel"
+        ? 5
+        : selectedFormat === "Story"
+          ? 3
+          : 1;
 
     const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
       method: "POST",
@@ -130,12 +148,13 @@ app.post("/generate", async (req, res) => {
             content: `${promptTemplate}
 
 Output schema:
-{ "slides": [{ "title": "string", "content": "string", "topic": "string", "background_keywords": "string", "design_style": "modern|educational|historical|playful" }] }`,
+{ "slides": [{ "title": "string", "content": "string", "topic": "string", "background_prompt": "string", "design_style": "modern|educational|historical|playful", "layout": "center|split|highlight|quote" }] }`,
           },
           {
             role: "user",
             content: `Idea: ${idea.trim()}
-Format preference: ${selectedFormat}`,
+Format preference: ${selectedFormat}
+Number of slides requested: ${requestedSlides}`,
           },
         ],
       }),
@@ -152,20 +171,21 @@ Format preference: ${selectedFormat}`,
     let slides = normalizeSlides(parsed.slides);
 
     if (selectedFormat === "Carousel") {
-      while (slides.length < 5) {
+      while (slides.length < requestedSlides) {
         slides.push({
           title: `Slide ${slides.length + 1}`,
           content: "Add your point here.",
           topic: "General",
-          background_keywords: "creative social media background, modern gradient",
+          background_prompt: "Aesthetic social media creative with modern gradients and clean composition",
           design_style: "modern",
+          layout: slides.length % 2 === 0 ? "center" : "split",
         });
       }
-      slides = slides.slice(0, 5);
+      slides = slides.slice(0, requestedSlides);
     } else if (selectedFormat === "Post") {
       slides = slides.slice(0, 1);
     } else {
-      slides = slides.slice(0, 3);
+      slides = slides.slice(0, requestedSlides);
     }
 
     return res.json(slides);
