@@ -1,7 +1,6 @@
 import express from "express";
 import cors from "cors";
 import dotenv from "dotenv";
-import OpenAI from "openai";
 
 dotenv.config();
 
@@ -31,28 +30,51 @@ app.use((req, _res, next) => {
   next();
 });
 
-const openai = new OpenAI({
-  apiKey: process.env.OPENROUTER_API_KEY,
-  baseURL: "https://openrouter.ai/api/v1",
-});
-
 const promptTemplate = `You are a social media content expert.
 
-Convert the idea into a 5-slide Instagram carousel.
+You convert messy ideas into polished social media creatives.
 
-Structure:
-- Slide 1: Hook (attention-grabbing)
-- Slide 2-4: Explanation
-- Slide 5: Key takeaway
+Output format depends on selected format:
+
+1) Carousel
+- Slide 1: Hook (attention-grabbing, emotional)
+- Slide 2: Problem (relatable)
+- Slide 3: Insight (concept explanation)
+- Slide 4: Solution (practical value)
+- Slide 5: Takeaway (strong closing)
+
+2) Post
+- Return 1 slide only
+- One impactful, concise message
+
+3) Story
+- Return 1-3 slides
+- Short punchy lines for quick vertical consumption
 
 Each slide must include:
 - Title (short)
 - Content (2-3 lines, simple language)
-- Image keyword (single word or short phrase for visual theme)
+- topic (single short topic label such as Math, Physics, History, Kids, Chemistry)
+- background_keywords (visual search keywords for image generation)
+- design_style (must be one of: modern, educational, historical, playful)
+
+Use simple conversational language. Keep it social-media friendly, not academic.
+Make visuals context-aware:
+- Chemistry -> lab, molecules, reactions
+- Physics -> motion, space, diagrams
+- Math -> equations, graphs, numbers
+- History -> forts, warriors, ancient themes
+- Kids -> playful, colorful visuals
 
 Return ONLY JSON:
 [
- { "title": "...", "content": "...", "image": "..." }
+ {
+   "title": "...",
+   "content": "...",
+   "topic": "...",
+   "background_keywords": "...",
+   "design_style": "modern"
+ }
 ]`;
 
 function normalizeSlides(rawSlides) {
@@ -63,16 +85,16 @@ function normalizeSlides(rawSlides) {
   const slides = rawSlides.slice(0, 5).map((slide, index) => ({
     title: String(slide?.title || `Slide ${index + 1}`).trim(),
     content: String(slide?.content || "").trim(),
-    image: String(slide?.image || "education").trim(),
+    topic: String(slide?.topic || "General").trim(),
+    background_keywords: String(
+      slide?.background_keywords || `${slide?.topic || "education"}, modern illustration`,
+    ).trim(),
+    design_style: ["modern", "educational", "historical", "playful"].includes(
+      String(slide?.design_style || "").toLowerCase(),
+    )
+      ? String(slide?.design_style).toLowerCase()
+      : "modern",
   }));
-
-  while (slides.length < 5) {
-    slides.push({
-      title: `Slide ${slides.length + 1}`,
-      content: "Add your point here.",
-      image: "education",
-    });
-  }
 
   return slides;
 }
@@ -84,33 +106,68 @@ app.post("/generate", async (req, res) => {
     return res.status(400).json({ error: "Idea is required." });
   }
 
-  if (!process.env.OPENROUTER_API_KEY) {
-    return res.status(500).json({ error: "OpenRouter API key is missing in backend env." });
-  }
-
   try {
-    const completion = await openai.chat.completions.create({
-      model: process.env.OPENROUTER_MODEL || "openai/gpt-4o-mini",
-      response_format: { type: "json_object" },
-      messages: [
-        {
-          role: "system",
-          content: `${promptTemplate}
+    if (!process.env.OPENROUTER_API_KEY) {
+      throw new Error("OPENROUTER_API_KEY is missing in environment variables");
+    }
+
+    const selectedFormat = ["Post", "Story", "Carousel"].includes(String(format))
+      ? String(format)
+      : "Carousel";
+
+    const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model: process.env.OPENROUTER_MODEL || "openai/gpt-4o-mini",
+        response_format: { type: "json_object" },
+        messages: [
+          {
+            role: "system",
+            content: `${promptTemplate}
 
 Output schema:
-{ "slides": [{ "title": "string", "content": "string", "image": "string" }] }`,
-        },
-        {
-          role: "user",
-          content: `Idea: ${idea.trim()}
-Format preference: ${format || "Post"}`,
-        },
-      ],
+{ "slides": [{ "title": "string", "content": "string", "topic": "string", "background_keywords": "string", "design_style": "modern|educational|historical|playful" }] }`,
+          },
+          {
+            role: "user",
+            content: `Idea: ${idea.trim()}
+Format preference: ${selectedFormat}`,
+          },
+        ],
+      }),
     });
 
-    const rawContent = completion.choices?.[0]?.message?.content ?? "{}";
+    if (!response.ok) {
+      const errorBody = await response.text();
+      throw new Error(`OpenRouter request failed (${response.status}): ${errorBody}`);
+    }
+
+    const completion = await response.json();
+    const rawContent = completion?.choices?.[0]?.message?.content ?? "{}";
     const parsed = JSON.parse(rawContent);
-    const slides = normalizeSlides(parsed.slides);
+    let slides = normalizeSlides(parsed.slides);
+
+    if (selectedFormat === "Carousel") {
+      while (slides.length < 5) {
+        slides.push({
+          title: `Slide ${slides.length + 1}`,
+          content: "Add your point here.",
+          topic: "General",
+          background_keywords: "creative social media background, modern gradient",
+          design_style: "modern",
+        });
+      }
+      slides = slides.slice(0, 5);
+    } else if (selectedFormat === "Post") {
+      slides = slides.slice(0, 1);
+    } else {
+      slides = slides.slice(0, 3);
+    }
+
     return res.json(slides);
   } catch (error) {
     const safeMessage = error instanceof Error ? error.message : "Unknown error";
@@ -133,6 +190,7 @@ app.get("/health", (_req, res) => {
 });
 
 app.listen(port, () => {
+  console.log("API KEY:", process.env.OPENROUTER_API_KEY ? "Present" : "Missing");
   console.log(`SlideForge backend running on port ${port} (${nodeEnv})`);
   if (corsOrigins.length > 0) {
     console.log(`Allowed CORS origins: ${corsOrigins.join(", ")}`);

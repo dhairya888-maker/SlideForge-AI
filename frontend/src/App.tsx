@@ -5,15 +5,18 @@ import { useMemo, useState } from "react";
 type Slide = {
   title: string;
   content: string;
+  background_prompt: string;
+  topic: string;
+  background_keywords: string;
+  design_style: "modern" | "educational" | "historical" | "playful";
 };
-
-type Theme = "Minimal" | "Gradient" | "Dark";
-type LayoutStyle = "centered" | "split" | "highlight" | "quote";
 
 const API_URL = import.meta.env.VITE_API_URL;
 console.log("API URL:", API_URL);
-const LAYOUTS: LayoutStyle[] = ["centered", "split", "highlight", "quote"];
-const THEME_OPTIONS: Theme[] = ["Minimal", "Gradient", "Dark"];
+type FormatType = "Post" | "Story" | "Carousel";
+type LayoutVariant = "centered" | "split" | "highlight" | "quote";
+const LAYOUT_VARIANTS: LayoutVariant[] = ["centered", "split", "highlight", "quote"];
+const FORMAT_OPTIONS: FormatType[] = ["Post", "Story", "Carousel"];
 
 async function generateSlides(idea: string, format: string): Promise<Slide[]> {
   if (!API_URL) {
@@ -31,287 +34,51 @@ async function generateSlides(idea: string, format: string): Promise<Slide[]> {
   }
 
   const data = (await response.json()) as Slide[];
-  return data.slice(0, 5);
+  return data.slice(0, 5).map((slide) => ({
+    title: slide.title,
+    content: slide.content,
+    topic: slide.topic || "General",
+    background_prompt:
+      slide.background_prompt ||
+      `Beautiful ${slide.design_style || "modern"} social media visual about ${slide.topic || "education"}`,
+    background_keywords: slide.background_keywords || `${slide.topic || "education"}, social media design`,
+    design_style: slide.design_style || "modern",
+  }));
 }
 
-function wrapTextLines(ctx: CanvasRenderingContext2D, text: string, maxWidth: number, maxLines: number) {
-  const words = text.split(/\s+/).filter(Boolean);
-  const lines: string[] = [];
-  let currentLine = "";
-  let wordIndex = 0;
-
-  while (wordIndex < words.length) {
-    const word = words[wordIndex];
-    const nextLine = currentLine ? `${currentLine} ${word}` : word;
-    if (ctx.measureText(nextLine).width <= maxWidth) {
-      currentLine = nextLine;
-      wordIndex += 1;
-      continue;
-    }
-
-    if (currentLine) {
-      lines.push(currentLine);
-      if (lines.length >= maxLines) {
-        currentLine = "";
-        break;
-      }
-      currentLine = "";
-      continue;
-    }
-
-    let chunk = "";
-    for (const char of word) {
-      const attempt = chunk + char;
-      if (ctx.measureText(attempt).width <= maxWidth) {
-        chunk = attempt;
-      } else {
-        break;
-      }
-    }
-
-    const safeChunk = chunk || word.charAt(0);
-    lines.push(safeChunk);
-    if (lines.length >= maxLines) {
-      currentLine = "";
-      break;
-    }
-
-    words[wordIndex] = word.slice(safeChunk.length);
-    if (!words[wordIndex]) {
-      wordIndex += 1;
-    }
-  }
-
-  if (currentLine && lines.length < maxLines) lines.push(currentLine);
-  return lines.slice(0, maxLines);
+function hashString(input: string) {
+  return input.split("").reduce((acc, char) => acc + char.charCodeAt(0), 0);
 }
 
-function fitTextLines(
-  ctx: CanvasRenderingContext2D,
-  text: string,
-  maxWidth: number,
-  maxLines: number,
-  startSize: number,
-  minSize: number,
-  weight: number,
-) {
-  let fontSize = startSize;
-  let lines: string[] = [];
-
-  while (fontSize >= minSize) {
-    ctx.font = `${weight} ${fontSize}px Inter, sans-serif`;
-    lines = wrapTextLines(ctx, text, maxWidth, maxLines);
-    const tooWide = lines.some((line) => ctx.measureText(line).width > maxWidth);
-    const linesWithinLimit =
-      lines.length < maxLines ||
-      (lines.length === maxLines &&
-        wrapTextLines(ctx, text, maxWidth, maxLines + 1).length <= maxLines);
-    if (!tooWide && linesWithinLimit) break;
-    fontSize -= 2;
-  }
-
-  return { lines, fontSize };
+function getLayoutVariant(slide: Slide, index: number): LayoutVariant {
+  const seed = hashString(`${slide.title}${slide.topic}${slide.design_style}${index}`);
+  return LAYOUT_VARIANTS[seed % LAYOUT_VARIANTS.length];
 }
 
-function drawThemeBackground(ctx: CanvasRenderingContext2D, theme: Theme) {
-  if (theme === "Minimal") {
-    ctx.fillStyle = "#ffffff";
-    ctx.fillRect(0, 0, 500, 500);
-    ctx.strokeStyle = "rgba(17, 17, 17, 0.08)";
-    for (let i = 0; i < 10; i += 1) {
-      ctx.beginPath();
-      ctx.moveTo(0, i * 56);
-      ctx.lineTo(500, i * 56);
-      ctx.stroke();
-    }
-    return;
-  }
-
-  if (theme === "Dark") {
-    const darkGradient = ctx.createLinearGradient(0, 0, 500, 500);
-    darkGradient.addColorStop(0, "#09090b");
-    darkGradient.addColorStop(1, "#111827");
-    ctx.fillStyle = darkGradient;
-    ctx.fillRect(0, 0, 500, 500);
-    ctx.fillStyle = "rgba(34, 211, 238, 0.16)";
-    ctx.fillRect(0, 360, 500, 140);
-    return;
-  }
-
-  const gradient = ctx.createLinearGradient(0, 0, 500, 500);
-  gradient.addColorStop(0, "#7c3aed");
-  gradient.addColorStop(0.55, "#5b4ee6");
-  gradient.addColorStop(1, "#3b82f6");
-  ctx.fillStyle = gradient;
-  ctx.fillRect(0, 0, 500, 500);
+function getTopicEmoji(topic: string) {
+  const value = topic.toLowerCase();
+  if (value.includes("chem")) return "🧪";
+  if (value.includes("phys")) return "🚀";
+  if (value.includes("math")) return "📐";
+  if (value.includes("history")) return "🏛️";
+  if (value.includes("kid")) return "🎨";
+  return "✨";
 }
 
-function drawDecorativeShapes(ctx: CanvasRenderingContext2D, theme: Theme) {
-  if (theme === "Minimal") {
-    ctx.strokeStyle = "rgba(17, 17, 17, 0.12)";
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-    ctx.arc(420, 90, 58, 0, Math.PI * 2);
-    ctx.stroke();
-    ctx.beginPath();
-    ctx.arc(90, 420, 42, 0, Math.PI * 2);
-    ctx.stroke();
-    return;
-  }
-
-  if (theme === "Dark") {
-    ctx.fillStyle = "rgba(34, 211, 238, 0.2)";
-    ctx.beginPath();
-    ctx.arc(430, 90, 100, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.fillStyle = "rgba(168, 85, 247, 0.2)";
-    ctx.beginPath();
-    ctx.arc(70, 440, 120, 0, Math.PI * 2);
-    ctx.fill();
-    return;
-  }
-
-  ctx.fillStyle = "rgba(255, 255, 255, 0.14)";
-  ctx.beginPath();
-  ctx.arc(420, 85, 110, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.beginPath();
-  ctx.arc(75, 430, 135, 0, Math.PI * 2);
-  ctx.fill();
+function getDefaultThemeByTopic(topic: string) {
+  const value = topic.toLowerCase();
+  if (value.includes("chem")) return { primary: "#7c3aed", secondary: "#14b8a6" };
+  if (value.includes("phys")) return { primary: "#2563eb", secondary: "#7c3aed" };
+  if (value.includes("math")) return { primary: "#1d4ed8", secondary: "#f59e0b" };
+  if (value.includes("history")) return { primary: "#92400e", secondary: "#7c2d12" };
+  if (value.includes("kid")) return { primary: "#ec4899", secondary: "#8b5cf6" };
+  return { primary: "#7c3aed", secondary: "#2563eb" };
 }
 
-function pickKeyword(slide: Slide) {
-  const source = `${slide.title} ${slide.content}`.replace(/[^\w\s]/g, "");
-  return source.split(/\s+/).filter((word) => word.length > 4)[0]?.toUpperCase() ?? "IMPACT";
-}
-
-function drawSlideLayout(
-  ctx: CanvasRenderingContext2D,
-  slide: Slide,
-  slideNumber: number,
-  theme: Theme,
-  layout: LayoutStyle,
-) {
-  const darkText = "#111111";
-  const lightText = "#ffffff";
-  const accent = theme === "Dark" ? "#22d3ee" : theme === "Minimal" ? "#111111" : "#c4b5fd";
-  const primaryText = theme === "Minimal" ? darkText : lightText;
-  const secondaryText = theme === "Minimal" ? "rgba(17, 17, 17, 0.8)" : "rgba(255, 255, 255, 0.9)";
-
-  const titleBlock = fitTextLines(ctx, slide.title, 390, 2, 44, 28, 700);
-  const contentBlock = fitTextLines(ctx, slide.content, 390, 3, 24, 18, 500);
-  const titleLines = titleBlock.lines;
-  const contentLines = contentBlock.lines;
-  const icon = layout === "quote" ? "✦" : layout === "highlight" ? "⚡" : "●";
-
-  ctx.textAlign = "center";
-
-  if (layout === "centered") {
-    ctx.fillStyle = theme === "Minimal" ? "rgba(255,255,255,0.75)" : "rgba(0,0,0,0.1)";
-    ctx.fillRect(40, 120, 420, 260);
-    ctx.fillStyle = primaryText;
-    ctx.font = `700 ${titleBlock.fontSize}px Inter, sans-serif`;
-    let y = 190;
-    for (const line of titleLines) {
-      ctx.fillText(line, 250, y);
-      y += Math.round(titleBlock.fontSize * 1.2);
-    }
-    ctx.fillStyle = secondaryText;
-    ctx.font = `500 ${contentBlock.fontSize}px Inter, sans-serif`;
-    y += 12;
-    for (const line of contentLines) {
-      ctx.fillText(line, 250, y);
-      y += Math.round(contentBlock.fontSize * 1.4);
-    }
-  } else if (layout === "split") {
-    ctx.fillStyle = theme === "Minimal" ? "rgba(17,17,17,0.06)" : "rgba(255,255,255,0.14)";
-    ctx.fillRect(44, 265, 412, 170);
-    ctx.fillStyle = primaryText;
-    const splitTitle = fitTextLines(ctx, slide.title, 390, 2, 42, 26, 700);
-    ctx.font = `700 ${splitTitle.fontSize}px Inter, sans-serif`;
-    let y = 135;
-    for (const line of splitTitle.lines) {
-      ctx.fillText(line, 250, y);
-      y += Math.round(splitTitle.fontSize * 1.2);
-    }
-    ctx.fillStyle = secondaryText;
-    const splitContent = fitTextLines(ctx, slide.content, 360, 3, 23, 17, 500);
-    ctx.font = `500 ${splitContent.fontSize}px Inter, sans-serif`;
-    y = 330;
-    for (const line of splitContent.lines) {
-      ctx.fillText(line, 250, y);
-      y += Math.round(splitContent.fontSize * 1.35);
-    }
-  } else if (layout === "highlight") {
-    const keyword = pickKeyword(slide);
-    ctx.fillStyle = accent;
-    const keywordSize = Math.max(42, 88 - keyword.length * 2);
-    ctx.font = `800 ${keywordSize}px Inter, sans-serif`;
-    ctx.fillText(keyword, 250, 220);
-
-    ctx.fillStyle = primaryText;
-    const highlightTitle = fitTextLines(ctx, slide.title, 390, 1, 34, 22, 700);
-    ctx.font = `700 ${highlightTitle.fontSize}px Inter, sans-serif`;
-    ctx.fillText(highlightTitle.lines[0] ?? slide.title, 250, 285);
-    ctx.fillStyle = secondaryText;
-    const summaryText = fitTextLines(ctx, slide.content, 370, 2, 22, 17, 500);
-    ctx.font = `500 ${summaryText.fontSize}px Inter, sans-serif`;
-    const summary = summaryText.lines;
-    let y = 335;
-    for (const line of summary) {
-      ctx.fillText(line, 250, y);
-      y += Math.round(summaryText.fontSize * 1.35);
-    }
-  } else {
-    ctx.fillStyle = theme === "Minimal" ? "rgba(17,17,17,0.08)" : "rgba(255,255,255,0.13)";
-    ctx.fillRect(68, 105, 364, 288);
-    ctx.fillStyle = primaryText;
-    const quoteBlock = fitTextLines(ctx, `"${slide.content}"`, 320, 4, 30, 18, 700);
-    ctx.font = `700 ${quoteBlock.fontSize}px Inter, sans-serif`;
-    const quoteLines = quoteBlock.lines;
-    let y = 185;
-    for (const line of quoteLines) {
-      ctx.fillText(line, 250, y);
-      y += Math.round(quoteBlock.fontSize * 1.25);
-    }
-    ctx.fillStyle = secondaryText;
-    const author = fitTextLines(ctx, `- ${slide.title}`, 330, 1, 24, 16, 600);
-    ctx.font = `600 ${author.fontSize}px Inter, sans-serif`;
-    ctx.fillText(author.lines[0] ?? `- ${slide.title}`, 250, 390);
-  }
-
-  ctx.fillStyle = accent;
-  ctx.font = "700 28px Inter, sans-serif";
-  ctx.fillText(icon, 58, 66);
-  ctx.fillText(icon, 442, 66);
-
-  ctx.fillStyle = theme === "Minimal" ? "rgba(17,17,17,0.14)" : "rgba(255,255,255,0.2)";
-  ctx.fillRect(184, 446, 132, 34);
-  ctx.fillStyle = primaryText;
-  ctx.font = "600 20px Inter, sans-serif";
-  ctx.fillText(`${slideNumber}/5`, 250, 469);
-}
-
-function generateSlideImage(slide: Slide, slideNumber: number, theme: Theme, layout: LayoutStyle): string {
-  const canvas = document.createElement("canvas");
-  canvas.width = 500;
-  canvas.height = 500;
-  const ctx = canvas.getContext("2d");
-  if (!ctx) return "";
-
-  drawThemeBackground(ctx, theme);
-  drawDecorativeShapes(ctx, theme);
-  drawSlideLayout(ctx, slide, slideNumber, theme, layout);
-  return canvas.toDataURL("image/png");
-}
-
-function downloadDataUrl(dataUrl: string, filename: string) {
-  const link = document.createElement("a");
-  link.href = dataUrl;
-  link.download = filename;
-  document.body.appendChild(link);
-  link.click();
-  link.remove();
+function buildUnsplashUrl(slide: Slide, format: FormatType) {
+  const dimensions = format === "Story" ? "800x1422" : "800x800";
+  const keywords = `${slide.background_keywords}, ${slide.topic}, ${slide.design_style}, social media`;
+  return `https://source.unsplash.com/${dimensions}/?${encodeURIComponent(keywords)}`;
 }
 
 async function dataUrlToBlob(dataUrl: string) {
@@ -319,17 +86,11 @@ async function dataUrlToBlob(dataUrl: string) {
   return response.blob();
 }
 
-function getLayoutForSlide(slide: Slide, index: number): LayoutStyle {
-  const seed = `${slide.title}${slide.content}${index}`
-    .split("")
-    .reduce((total, char) => total + char.charCodeAt(0), 0);
-  return LAYOUTS[seed % LAYOUTS.length];
-}
-
 function App() {
   const [idea, setIdea] = useState("");
-  const [format, setFormat] = useState("Post");
-  const [theme, setTheme] = useState<Theme>("Gradient");
+  const [format, setFormat] = useState<FormatType>("Carousel");
+  const [primaryColor, setPrimaryColor] = useState("#7c3aed");
+  const [secondaryColor, setSecondaryColor] = useState("#2563eb");
   const [slides, setSlides] = useState<Slide[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [isPreparingDownload, setIsPreparingDownload] = useState(false);
@@ -346,23 +107,41 @@ function App() {
   const renderedSlides = useMemo(
     () =>
       slides.map((slide, index) => {
-        const layout = getLayoutForSlide(slide, index);
+        const layout = getLayoutVariant(slide, index);
+        const displayTag =
+          format === "Carousel"
+            ? index === 0
+              ? "Hook"
+              : index === 4
+                ? "Takeaway"
+                : `Point ${index}`
+            : format;
+
         return {
           ...slide,
           layout,
-          imageUrl: generateSlideImage(slide, index + 1, theme, layout),
+          imageUrl: buildUnsplashUrl(slide, format),
+          displayTag,
+          emoji: getTopicEmoji(slide.topic),
         };
       }),
-    [slides, theme],
+    [slides, format],
   );
 
   const handleGenerate = async () => {
+    if (!idea.trim()) {
+      setError("Please enter an idea before generating.");
+      return;
+    }
     if (!canGenerate) return;
     setError("");
     setIsLoading(true);
     try {
       const generatedSlides = await generateSlides(idea, format);
       setSlides(generatedSlides);
+      const defaults = getDefaultThemeByTopic(generatedSlides[0]?.topic || "General");
+      setPrimaryColor(defaults.primary);
+      setSecondaryColor(defaults.secondary);
     } catch (generationError) {
       setError(
         generationError instanceof Error ? generationError.message : "Something went wrong. Please try again.",
@@ -395,8 +174,13 @@ function App() {
     await navigator.clipboard.writeText(allSlidesText);
   };
 
-  const handleDownloadSlide = (index: number, imageUrl: string) => {
-    downloadDataUrl(imageUrl, `slide-${index + 1}.png`);
+  const handleDownloadSlide = async (index: number, imageUrl: string) => {
+    try {
+      const blob = await dataUrlToBlob(imageUrl);
+      saveAs(blob, `slide-${index + 1}.png`);
+    } catch {
+      setError("Could not download this slide. Please try again.");
+    }
   };
 
   const handleDownloadCarousel = async () => {
@@ -420,53 +204,58 @@ function App() {
   return (
     <main className="min-h-screen text-white">
       <div className="mx-auto flex w-full max-w-6xl flex-col gap-10 px-4 py-10 sm:px-6 lg:px-8">
-        <header className="mx-auto max-w-3xl space-y-4 text-center">
+        <header className="mx-auto max-w-4xl space-y-5 pt-2 text-center sm:space-y-6">
           <p className="inline-flex rounded-full border border-violet-400/30 bg-violet-500/10 px-3 py-1 text-xs font-semibold uppercase tracking-[0.2em] text-violet-200">
             AI Social Media Studio
           </p>
-          <h1 className="text-4xl font-extrabold tracking-tight sm:text-6xl">
+          <h1 className="text-5xl font-extrabold tracking-tight sm:text-7xl">
             SlideForge AI
             <span className="block bg-gradient-to-r from-violet-300 via-purple-200 to-orange-200 bg-clip-text text-transparent">
               Premium Carousel Creator
             </span>
           </h1>
-          <p className="text-base text-slate-300 sm:text-lg">
-            Turn rough ideas into high-converting, beautifully designed social slides in seconds.
+          <p className="mx-auto max-w-2xl text-base leading-relaxed text-slate-300 sm:text-xl">
+            Turn rough ideas into high-converting, beautifully designed carousel stories in seconds.
           </p>
         </header>
 
-        <section className="glass rounded-3xl p-5 sm:p-8">
+        <section className="glass rounded-3xl p-6 sm:p-10">
           <div className="space-y-5">
             <textarea
               value={idea}
               onChange={(event) => setIdea(event.target.value)}
               placeholder="e.g. Explain why kids forget math and how spaced repetition helps"
-              className="h-44 w-full resize-none rounded-3xl border border-slate-500/40 bg-slate-900/55 px-5 py-4 text-sm text-white outline-none backdrop-blur-sm transition-all placeholder:text-slate-400 focus:border-violet-400 focus:ring-4 focus:ring-violet-500/20 sm:text-base"
+              className="h-44 w-full resize-none rounded-3xl border border-slate-500/40 bg-slate-900/55 px-6 py-5 text-sm text-white outline-none backdrop-blur-sm transition-all placeholder:text-slate-400 focus:border-violet-400 focus:ring-4 focus:ring-violet-500/20 sm:text-base"
             />
             <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
               <div className="flex w-full flex-col gap-3 sm:w-auto sm:flex-row">
                 <select
                   value={format}
-                  onChange={(event) => setFormat(event.target.value)}
+                  onChange={(event) => setFormat(event.target.value as FormatType)}
                   className="w-full rounded-xl border border-slate-500/40 bg-slate-900/55 px-4 py-2 text-sm font-medium text-slate-100 outline-none backdrop-blur-sm transition focus:border-violet-400 focus:ring-2 focus:ring-violet-500/20 sm:w-40"
                 >
-                  <option>Post</option>
-                  <option>Story</option>
-                </select>
-                <div className="flex rounded-xl border border-slate-500/40 bg-slate-900/55 p-1 shadow-sm">
-                  {THEME_OPTIONS.map((themeOption) => (
-                    <button
-                      key={themeOption}
-                      onClick={() => setTheme(themeOption)}
-                      className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition ${
-                        theme === themeOption
-                          ? "bg-gradient-to-r from-violet-500 to-orange-500 text-white shadow-md"
-                          : "text-slate-300 hover:text-violet-300"
-                      }`}
-                    >
-                      {themeOption}
-                    </button>
+                  {FORMAT_OPTIONS.map((option) => (
+                    <option key={option}>{option}</option>
                   ))}
+                </select>
+                <div className="flex items-center gap-2 rounded-xl border border-slate-500/40 bg-slate-900/55 px-3 py-2 shadow-sm">
+                  <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-300">
+                    Theme
+                  </span>
+                  <input
+                    type="color"
+                    value={primaryColor}
+                    onChange={(event) => setPrimaryColor(event.target.value)}
+                    className="h-7 w-7 cursor-pointer rounded border-0 bg-transparent p-0"
+                    title="Primary color"
+                  />
+                  <input
+                    type="color"
+                    value={secondaryColor}
+                    onChange={(event) => setSecondaryColor(event.target.value)}
+                    className="h-7 w-7 cursor-pointer rounded border-0 bg-transparent p-0"
+                    title="Secondary color"
+                  />
                 </div>
               </div>
               <button
@@ -483,14 +272,14 @@ function App() {
         {isLoading && (
           <section className="glass flex items-center gap-3 rounded-2xl p-4">
             <div className="spinner h-5 w-5 rounded-full border-2 border-violet-300/20 border-t-violet-300" />
-            <p className="text-sm font-medium text-slate-200">✨ Crafting your slides...</p>
+            <p className="text-sm font-medium text-slate-200">✨ Crafting your carousel...</p>
           </section>
         )}
 
         {error && <section className="rounded-xl border border-red-400/35 bg-red-500/10 p-3 text-sm text-red-200">{error}</section>}
 
         {slides.length > 0 && (
-          <section className="glass space-y-4 rounded-3xl p-5 sm:p-6">
+          <section className="glass space-y-5 rounded-3xl p-6 sm:p-8">
             <div className="flex items-center justify-between">
               <h2 className="text-xl font-semibold text-white sm:text-2xl">Generated Carousel</h2>
               <div className="flex items-center gap-2">
@@ -514,15 +303,60 @@ function App() {
               {renderedSlides.map((slide, index) => (
                 <article
                   key={`${slide.title}-${index}`}
-                  className="fade-in slide-card w-[338px] shrink-0 snap-start overflow-hidden rounded-3xl border border-slate-600/40 bg-slate-900/60 p-3 shadow-lg"
+                  className="fade-in slide-card w-[350px] shrink-0 snap-start overflow-hidden rounded-3xl border border-slate-600/40 bg-slate-900/60 p-4 shadow-lg"
                   style={{ animationDelay: `${index * 80}ms` }}
                 >
                   <div className="relative overflow-hidden rounded-2xl">
-                    <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/35 via-transparent to-transparent" />
-                    <img src={slide.imageUrl} alt={slide.title} className="aspect-square w-full rounded-2xl object-cover shadow-md" />
+                    <div
+                      className="pointer-events-none absolute inset-0 z-10"
+                      style={{
+                        background: `linear-gradient(160deg, ${primaryColor}66 0%, transparent 35%, ${secondaryColor}80 100%)`,
+                      }}
+                    />
+                    <div className="pointer-events-none absolute inset-0 z-10 bg-gradient-to-t from-black/85 via-black/35 to-black/15" />
+                    <img
+                      src={slide.imageUrl}
+                      alt={slide.title}
+                      className="aspect-square w-full rounded-2xl object-cover shadow-md"
+                      loading="lazy"
+                    />
+                    <div className="absolute inset-0 z-20 flex flex-col justify-end p-5">
+                      <div className="pointer-events-none absolute -right-5 -top-5 h-24 w-24 rounded-full bg-white/10 blur-sm" />
+                      <div className="pointer-events-none absolute -left-4 top-1/2 h-16 w-16 rounded-full bg-white/10 blur-sm" />
+                      <div className="mb-2 flex items-center justify-between">
+                        <span className="rounded-full bg-white/20 px-2 py-1 text-[11px] font-semibold uppercase tracking-wide text-white">
+                          {slide.displayTag}
+                        </span>
+                        <span className="rounded-full bg-violet-500/30 px-2 py-1 text-[11px] font-semibold uppercase tracking-wide text-violet-100">
+                          {slide.design_style}
+                        </span>
+                      </div>
+                      <h3
+                        className={`mb-2 line-clamp-3 font-extrabold leading-tight text-white ${
+                          slide.layout === "highlight"
+                            ? "text-3xl"
+                            : slide.layout === "split"
+                              ? "text-2xl"
+                              : "text-[1.7rem]"
+                        }`}
+                      >
+                        {slide.title}
+                      </h3>
+                      <p
+                        className={`line-clamp-4 leading-relaxed text-slate-100 ${
+                          format === "Story" ? "text-base" : "text-sm"
+                        } ${slide.layout === "quote" ? "italic" : ""}`}
+                      >
+                        {slide.content}
+                      </p>
+                      <div className="mt-3 flex items-center justify-between text-xs text-slate-200/90">
+                        <span>{slide.emoji} {slide.topic}</span>
+                        <span className="capitalize">{slide.layout}</span>
+                      </div>
+                    </div>
                   </div>
-                  <div className="flex items-center justify-between px-2 pb-2 pt-3">
-                    <span className="text-sm font-medium text-slate-300 capitalize">{slide.layout} layout</span>
+                  <div className="flex items-center justify-between px-3 pb-2 pt-4">
+                    <span className="text-sm font-medium text-slate-300 capitalize">AI generated visual</span>
                     <div className="flex items-center gap-2">
                       <button
                         onClick={() => handleDownloadSlide(index, slide.imageUrl)}
