@@ -1,6 +1,6 @@
 import { saveAs } from "file-saver";
 import JSZip from "jszip";
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 
 type Slide = {
   title: string;
@@ -94,7 +94,7 @@ function getDefaultThemeByTopic(topic: string) {
 function buildPollinationsUrl(slide: Slide, format: FormatType) {
   const ratioHint = format === "Story" ? "vertical 9:16 composition" : "square 1:1 composition";
   const prompt = `${slide.background_prompt}, ${slide.topic}, ${slide.design_style} style, ${ratioHint}, clean composition, premium social media design, no text`;
-  return `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}`;
+  return `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}?width=512&height=512&nologo=true`;
 }
 
 async function dataUrlToBlob(dataUrl: string) {
@@ -111,9 +111,12 @@ function App() {
   const [secondaryColor, setSecondaryColor] = useState("#2563eb");
   const [slides, setSlides] = useState<Slide[]>([]);
   const [isLoading, setIsLoading] = useState(false);
+  const [loadingStep, setLoadingStep] = useState("Understanding your idea...");
   const [isPreparingDownload, setIsPreparingDownload] = useState(false);
   const [regeneratingIndex, setRegeneratingIndex] = useState<number | null>(null);
   const [error, setError] = useState("");
+  const [failedImages, setFailedImages] = useState<Record<string, boolean>>({});
+  const loadingTimers = useRef<number[]>([]);
 
   const canGenerate = idea.trim().length > 0 && !isLoading;
 
@@ -158,10 +161,17 @@ function App() {
     if (!canGenerate) return;
     setError("");
     setIsLoading(true);
+    setLoadingStep("Understanding your idea...");
+    loadingTimers.current.forEach((timer) => window.clearTimeout(timer));
+    loadingTimers.current = [
+      window.setTimeout(() => setLoadingStep("Designing slides..."), 500),
+      window.setTimeout(() => setLoadingStep("Generating visuals..."), 1200),
+    ];
     try {
       const slideCount = format === "Post" ? 1 : numberOfSlides;
       const generatedSlides = await generateSlides(idea, format, slideCount);
       setSlides(generatedSlides);
+      setFailedImages({});
       const defaults = getDefaultThemeByTopic(generatedSlides[0]?.topic || "General");
       setPrimaryColor(defaults.primary);
       setSecondaryColor(defaults.secondary);
@@ -170,6 +180,8 @@ function App() {
         generationError instanceof Error ? generationError.message : "Something went wrong. Please try again.",
       );
     } finally {
+      loadingTimers.current.forEach((timer) => window.clearTimeout(timer));
+      loadingTimers.current = [];
       setIsLoading(false);
     }
   };
@@ -357,7 +369,7 @@ function App() {
         {isLoading && (
           <section className="glass flex items-center gap-3 rounded-2xl p-4">
             <div className="spinner h-5 w-5 rounded-full border-2 border-violet-300/20 border-t-violet-300" />
-            <p className="text-sm font-medium text-slate-200">✨ Crafting your content...</p>
+            <p className="text-sm font-medium text-slate-200">{loadingStep}</p>
           </section>
         )}
 
@@ -404,9 +416,23 @@ function App() {
                     <img
                       src={slide.imageUrl}
                       alt={slide.title}
-                      className={`${format === "Story" ? "aspect-[9/16]" : "aspect-square"} w-full rounded-2xl object-cover shadow-md`}
+                      className={`${format === "Story" ? "aspect-[9/16]" : "aspect-square"} w-full rounded-2xl object-cover shadow-md ${failedImages[slide.imageUrl] ? "hidden" : "block"}`}
                       loading="lazy"
+                      onError={() =>
+                        setFailedImages((current) => ({
+                          ...current,
+                          [slide.imageUrl]: true,
+                        }))
+                      }
                     />
+                    {failedImages[slide.imageUrl] && (
+                      <div
+                        className={`${format === "Story" ? "aspect-[9/16]" : "aspect-square"} w-full rounded-2xl`}
+                        style={{
+                          background: `linear-gradient(145deg, ${primaryColor}CC 0%, ${secondaryColor}CC 100%)`,
+                        }}
+                      />
+                    )}
                     <div className="absolute inset-0 z-20 flex flex-col justify-end p-5">
                       <div className="pointer-events-none absolute -right-5 -top-5 h-24 w-24 rounded-full bg-white/10 blur-sm" />
                       <div className="pointer-events-none absolute -left-4 top-1/2 h-16 w-16 rounded-full bg-white/10 blur-sm" />
